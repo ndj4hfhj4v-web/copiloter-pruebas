@@ -1,0 +1,46 @@
+/* Native MapLibre camera and projected overlays. The existing navigator owns GPS/recording. */
+(function(root){
+ class NativeCamera {
+  constructor(renderer,map,getNavigator,env={}){
+   this.gl=renderer;this.map=map;this.nav=getNavigator;this.L=env.L||root.L;this.document=env.document||root.document;this.raf=env.raf||root.requestAnimationFrame.bind(root);this.caf=env.caf||root.cancelAnimationFrame.bind(root);this.frame=null;this.dataFrame=null;this.updatingLeaflet=false;this.bound=new WeakSet();this.geometry=new WeakMap();this.disposed=false;
+   this.nativeMove=()=>this.toLeaflet();this.manual=e=>{if(!e.originalEvent)return;this.handlingGesture=true;try{this.nav()?.suspendCamera?.();}finally{this.handlingGesture=false;}this.toLeaflet();};this.leafMove=()=>this.queueCamera();this.changed=e=>{this.bindLayer(e.layer);this.queueData();};
+   map.options.zoomSnap=0;
+   for(const handler of ['dragging','scrollWheelZoom','touchZoom','doubleClickZoom','boxZoom','keyboard','touchRotate','dragRotate'])map[handler]?.disable?.();
+   for(const type of ['dragstart','rotatestart','pitchstart','zoomstart'])renderer.on(type,this.manual);
+   renderer.on('move',this.nativeMove);map.on('move zoom rotate',this.leafMove);map.on('zoomend',()=>this.queueData());map.on('layeradd layerremove',this.changed);map.eachLayer(l=>this.bindLayer(l));
+   map.getContainer().addEventListener('click',e=>{if(e.target.closest('.leaflet-control-zoom-in,.leaflet-control-zoom-out'))this.nav()?.suspendCamera?.();},true);
+   renderer.on('style.load',()=>{this.installLayers();this.queueData();});renderer.on('click',e=>this.popup(e));
+   root.document?.documentElement.setAttribute('data-camera-native','true');
+   this.toLeaflet();
+  }
+  bindLayer(layer){if(!layer||this.bound.has(layer))return;this.bound.add(layer);layer.on?.('move add remove',()=>this.queueData());
+   for(const name of ['setLatLngs','addLatLng','setRadius','setStyle','setOpacity','bindTooltip']){const original=layer[name];if(typeof original!=='function')continue;const camera=this;layer[name]=function(...args){const result=original.apply(this,args);if(name==='setLatLngs'||name==='addLatLng')camera.geometry.delete(this);camera.queueData();return result;};}
+  }
+  cancel(){if(this.updatingLeaflet)return;if(!this.handlingGesture)this.gl.stop();if(this.frame!==null)this.caf(this.frame);this.frame=null;}
+  follow(fix){if(this.nav()?.isFollowing?.()===false)return;this.gl.easeTo({center:[fix.lon,fix.lat],duration:650,easing:t=>t*(2-t),essential:true});}
+  toLeaflet(){if(this.disposed)return;const center=this.gl.getCenter(),zoom=this.gl.getZoom()+1,bearing=-this.gl.getBearing();const host=this.gl.getContainer?.();if(host){host.dataset.cameraRevision='native-2';host.dataset.cameraBearing=String(this.gl.getBearing());host.dataset.cameraPitch=String(this.gl.getPitch());host.dataset.cameraZoom=String(this.gl.getZoom());}this.updatingLeaflet=true;try{const current=this.map.getCenter();if(Math.abs(((((this.map.getBearing?.()||0)-bearing)%360+540)%360)-180)>.01)this.map.setBearing?.(bearing);if(Math.abs(current.lat-center.lat)>1e-9||Math.abs(current.lng-center.lng)>1e-9||Math.abs(this.map.getZoom()-zoom)>1e-7)this.map.setView([center.lat,center.lng],zoom,{animate:false});}finally{this.updatingLeaflet=false;}}
+  queueCamera(){if(this.updatingLeaflet||this.disposed||this.frame!==null)return;this.frame=this.raf(()=>{this.frame=null;this.fromLeaflet();});}
+  fromLeaflet(){if(this.updatingLeaflet||this.disposed)return;const c=this.map.getCenter(),now=this.gl.getCenter(),zoom=this.map.getZoom()-1,bearing=-(this.map.getBearing?.()||0);const turn=(((bearing-this.gl.getBearing())%360+540)%360)-180;if(Math.abs(c.lat-now.lat)<1e-9&&Math.abs(c.lng-now.lng)<1e-9&&Math.abs(zoom-this.gl.getZoom())<1e-7&&Math.abs(turn)<.01)return;this.gl.easeTo({center:[c.lng,c.lat],zoom,bearing:this.gl.getBearing()+turn,duration:350,essential:true});}
+  queueData(){if(this.disposed||this.dataFrame!==null)return;this.dataFrame=this.raf(()=>{this.dataFrame=null;const source=this.gl.getSource('copiloter-overlays');if(source)source.setData(this.collect());});}
+  collect(){const features=[],L=this.L;this.map.eachLayer(layer=>{
+   if(layer instanceof L.LayerGroup||!layer.toGeoJSON)return;const options=layer.options||{};let feature;
+   if(layer instanceof L.Circle){const p=layer.getLatLng(),metres=layer.getRadius(),ring=[];for(let n=0;n<=48;n++){const a=n/48*Math.PI*2;ring.push([p.lng+Math.cos(a)*metres/(111320*Math.cos(p.lat*Math.PI/180)),p.lat+Math.sin(a)*metres/111320]);}feature={type:'Feature',geometry:{type:'Polygon',coordinates:[ring]}};}
+   else if(layer instanceof L.Polyline){let cached=this.geometry.get(layer);if(!cached||cached.ref!==layer.getLatLngs()){cached={ref:layer.getLatLngs(),geometry:layer.toGeoJSON().geometry};this.geometry.set(layer,cached);}feature={type:'Feature',geometry:cached.geometry};}
+   else feature=layer.toGeoJSON();
+   if(!feature?.geometry||feature.type!=='Feature')return;
+   const gps=String(options.icon?.options?.className||'').includes('gps-arrow'),terminal=String(options.className||'').includes('route-terminal-stop');let label=layer.getTooltip?.()?.getContent?.();if(typeof label!=='string')label=label?.textContent||'';if(root.I18n)label=root.I18n.value(label);
+   feature.properties={kind:gps?'gps':terminal?'terminal':layer instanceof L.Circle?'accuracy':feature.geometry.type==='Point'?'stop':feature.geometry.type.includes('Polygon')?'polygon':'line',color:options.color||'#315e46',fill:options.fillColor||options.color||'#315e46',width:options.weight??2,opacity:options.opacity??1,fillOpacity:options.fillOpacity??.5,radius:options.radius||6.25,label,heading:this.nav()?.cameraState?.().heading||0};features.push(feature);
+  });return{type:'FeatureCollection',features};}
+  installLayers(){const gl=this.gl;if(gl.getSource('copiloter-overlays'))return;gl.addSource('copiloter-overlays',{type:'geojson',data:this.collect()});
+   const canvas=this.document.createElement('canvas');canvas.width=canvas.height=36;const ctx=canvas.getContext('2d');ctx.beginPath();ctx.moveTo(18,3);ctx.lineTo(32,32);ctx.lineTo(18,26);ctx.lineTo(4,32);ctx.closePath();ctx.fillStyle='#e2231a';ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle='#fff';ctx.lineJoin='round';ctx.stroke();if(!gl.hasImage('copiloter-gps'))gl.addImage('copiloter-gps',ctx.getImageData(0,0,36,36));ctx.clearRect(0,0,36,36);ctx.fillStyle='#e2f3a2';ctx.fillRect(9,9,18,18);ctx.strokeStyle='#244b3b';ctx.lineWidth=3;ctx.strokeRect(9,9,18,18);if(!gl.hasImage('copiloter-terminal'))gl.addImage('copiloter-terminal',ctx.getImageData(0,0,36,36));
+   const layer=(id,type,filter,paint,layout)=>gl.addLayer({id,source:'copiloter-overlays',type,filter,paint,...(layout?{layout}:{})});
+   layer('copiloter-area','fill',['in',['get','kind'],['literal',['accuracy','polygon']]],{'fill-color':['get','fill'],'fill-opacity':['get','fillOpacity']});
+   layer('copiloter-lines','line',['in',['geometry-type'],['literal',['LineString','Polygon']]],{'line-color':['get','color'],'line-width':['get','width'],'line-opacity':['get','opacity']},{'line-cap':'round','line-join':'round'});
+   layer('copiloter-stops','circle',['==',['get','kind'],'stop'],{'circle-radius':['get','radius'],'circle-color':['get','fill'],'circle-opacity':['get','fillOpacity'],'circle-stroke-color':['get','color'],'circle-stroke-width':['get','width']});
+   layer('copiloter-terminals','symbol',['==',['get','kind'],'terminal'],{}, {'icon-image':'copiloter-terminal','icon-size':['/',['get','radius'],9],'icon-allow-overlap':true,'icon-ignore-placement':true,'icon-pitch-alignment':'map','icon-rotation-alignment':'map'});
+   layer('copiloter-position','symbol',['==',['get','kind'],'gps'],{'icon-opacity':['get','opacity']},{'icon-image':'copiloter-gps','icon-allow-overlap':true,'icon-ignore-placement':true,'icon-rotate':['get','heading'],'icon-rotation-alignment':'map','icon-pitch-alignment':'map'});
+  }
+  popup(event){if(!this.Popup||!this.gl.getLayer("copiloter-stops"))return;const features=this.gl.queryRenderedFeatures([[event.point.x-7,event.point.y-7],[event.point.x+7,event.point.y+7]],{layers:['copiloter-stops','copiloter-terminals']});const feature=features.find(f=>f.properties.label);if(feature)new this.Popup({closeButton:true}).setLngLat(feature.geometry.coordinates).setText(feature.properties.label).addTo(this.gl);}
+ }
+ root.CopiloterNativeCamera=NativeCamera;if(typeof module!=='undefined')module.exports=NativeCamera;
+})(globalThis);
