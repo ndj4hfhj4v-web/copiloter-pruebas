@@ -86,3 +86,6 @@ Núremberg (solo pruebas privadas): recorridos y paradas © OpenStreetMap contri
 
 PROTOMAPS TEST CANDIDATE
 MapLibre GL JS 6.19.0: BSD-3-Clause. PMTiles 4.5.0: BSD-3-Clause. Protomaps basemap style 5.7.2: BSD-3-Clause / design CC0. Basemap data: ODbL, OpenStreetMap contributors and sources in protomaps/licenses/basemaps-LICENSE_DATA.md. Noto font glyphs: SIL Open Font License. Full notices in protomaps/licenses/. Glyph files are concatenated with byte-offset index; townhall sprite uses the existing generic building icon. No API keys or hosted paid mapping services.
+
+OPENFREEMAP ONLINE TEST
+Official OpenFreeMap servers: https://tiles.openfreemap.org/ . Bright (day), Fiord (night). Attribution: OpenFreeMap, OpenMapTiles, OpenStreetMap contributors. Terms: https://openfreemap.org/tos/ . No offline harvesting, regional packs, API keys or paid services. Existing Sevilla PMTiles, glyphs, licenses and provider source code retained.
