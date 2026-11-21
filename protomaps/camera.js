@@ -3,7 +3,7 @@
  class NativeCamera {
   constructor(renderer,map,getNavigator,env={}){
    this.gl=renderer;this.map=map;this.nav=getNavigator;this.L=env.L||root.L;this.document=env.document||root.document;this.raf=env.raf||root.requestAnimationFrame.bind(root);this.caf=env.caf||root.cancelAnimationFrame.bind(root);this.frame=null;this.dataFrame=null;this.updatingLeaflet=false;this.bound=new WeakSet();this.geometry=new WeakMap();this.disposed=false;
-   this.nativeMove=()=>{if(!this.writingCamera)this.toLeaflet();};this.manual=e=>{if(!e.originalEvent)return;this.handlingGesture=true;try{this.nav()?.suspendCamera?.();}finally{this.handlingGesture=false;}this.toLeaflet();};this.leafMove=()=>this.queueCamera();this.changed=e=>{this.bindLayer(e.layer);this.queueData();};
+   this.nativeMove=()=>{if(!this.writingCamera&&!this.animation)this.toLeaflet();};this.manual=e=>{if(!e.originalEvent)return;this.handlingGesture=true;try{this.nav()?.suspendCamera?.();}finally{this.handlingGesture=false;}this.toLeaflet();};this.leafMove=()=>this.queueCamera();this.changed=e=>{this.bindLayer(e.layer);this.queueData();};
    map.options.zoomSnap=0;
    for(const handler of ['dragging','scrollWheelZoom','touchZoom','doubleClickZoom','boxZoom','keyboard','touchRotate','dragRotate'])map[handler]?.disable?.();
    for(const type of ['dragstart','rotatestart','pitchstart','zoomstart'])renderer.on(type,this.manual);
@@ -11,13 +11,46 @@
    map.getContainer().addEventListener('click',e=>{if(e.target.closest('.leaflet-control-zoom-in,.leaflet-control-zoom-out'))this.nav()?.suspendCamera?.();},true);
    renderer.on('style.load',()=>{this.installLayers();this.queueData();});renderer.on('click',e=>this.popup(e));
    root.document?.documentElement.setAttribute('data-camera-native','true');
+   this.installLayoutTracking();
    this.toLeaflet();
   }
+  static anchor(width,height,visible={top:0,bottom:height},controls=[]){
+   const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));let top=clamp(visible.top||0,0,height-1),bottom=clamp(visible.bottom??height,top+1,height);
+   for(const r of controls){if(r.left>width/2+18||r.right<width/2-18||r.bottom<=top||r.top>=bottom||r.bottom-r.top>height*.45)continue;
+    if(r.bottom<=height*.45)top=Math.max(top,Math.min(r.bottom+8,bottom-1));
+    else if(r.top>=height*.55)bottom=Math.min(bottom,Math.max(r.top-8,top+1));
+   }
+   return{width,height,top,bottom,point:[width/2,top+(bottom-top)*2/3]};
+  }
+  layout(){
+   const host=this.gl.getContainer?.()||this.map.getContainer(),box=host.getBoundingClientRect?.()||{left:0,top:0,width:0,height:0},size=this.map.getSize?.()||{};
+   const width=host.clientWidth||box.width||size.x||390,height=host.clientHeight||box.height||size.y||800,win=this.document.defaultView;
+   let top=0,bottom=height;const controls=[];
+   if(win){const safe=this.probe?win.getComputedStyle(this.probe):null;top=parseFloat(safe?.paddingTop)||0;bottom-=parseFloat(safe?.paddingBottom)||0;
+    const viewport=win.visualViewport;if(viewport){top=Math.max(top,viewport.offsetTop-box.top);bottom=Math.min(bottom,viewport.offsetTop+viewport.height-box.top);}
+    for(const element of this.layoutControls()){
+     if(!element.getClientRects().length)continue;let visible=true;
+     for(let node=element;node&&node!==this.document.documentElement;node=node.parentElement){const style=win.getComputedStyle(node);if(node.hidden||style.display==='none'||style.visibility==='hidden'||style.opacity==='0'){visible=false;break;}}
+     if(!visible)continue;const r=element.getBoundingClientRect();controls.push({left:r.left-box.left,right:r.right-box.left,top:r.top-box.top,bottom:r.bottom-box.top});
+    }
+   }
+   return NativeCamera.anchor(width,height,{top,bottom},controls);
+  }
+  layoutControls(){return this.document.querySelectorAll?.('.route-heading,#senseBar,#gpsPanel,#gpsInformationView,.map-readouts,.leaflet-control-attribution')||[];}
+  installLayoutTracking(){
+   const win=this.document.defaultView;if(!win)return;const host=this.gl.getContainer?.()||this.map.getContainer();
+   this.probe=this.document.createElement('div');this.probe.setAttribute('aria-hidden','true');this.probe.style.cssText='position:absolute;inset:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)';host.append(this.probe);
+   this.onLayout=()=>this.requestLayout();this.gl.on('resize',this.onLayout);win.visualViewport?.addEventListener('resize',this.onLayout);win.visualViewport?.addEventListener('scroll',this.onLayout);
+   if(win.ResizeObserver){this.layoutResize=new win.ResizeObserver(this.onLayout);this.layoutResize.observe(host);for(const node of this.layoutControls())this.layoutResize.observe(node);}
+   if(win.MutationObserver){this.layoutObserver=new win.MutationObserver(records=>{const nodes=[...this.layoutControls()];if(records.some(r=>nodes.some(n=>n===r.target||r.target.contains?.(n))))this.requestLayout();});this.layoutObserver.observe(this.document.getElementById('gpsDetail')||host,{subtree:true,attributes:true,attributeFilter:['hidden','class','style','data-options-hidden','data-recording','data-navigating','data-menu-open']});}
+   (this.document.getElementById('gpsDetail')||host).addEventListener('transitionend',event=>{if([...this.layoutControls()].some(n=>n===event.target||event.target.contains?.(n)))this.requestLayout();});
+  }
+  requestLayout(){if(this.disposed||!this.lastFollowFix||this.nav()?.isFollowing?.()===false||this.layoutFrame!=null)return;this.layoutFrame=this.raf(()=>{this.layoutFrame=null;if(this.nav()?.isFollowing?.()!==false)this.follow(this.lastFollowFix,this.course);});}
   bindLayer(layer){if(!layer||this.bound.has(layer))return;this.bound.add(layer);layer.on?.('move add remove',()=>this.queueData());
    for(const name of ['setLatLngs','addLatLng','setRadius','setStyle','setOpacity','bindTooltip']){const original=layer[name];if(typeof original!=='function')continue;const camera=this;layer[name]=function(...args){const result=original.apply(this,args);if(name==='setLatLngs'||name==='addLatLng')camera.geometry.delete(this);camera.queueData();return result;};}
   }
   isSyncing(){return this.updatingLeaflet||!!this.writingCamera;}
-  cancel(){if(this.isSyncing())return;this.animation=null;if(this.motionFrame!=null)this.caf(this.motionFrame);this.motionFrame=null;if(!this.handlingGesture)this.gl.stop();if(this.frame!==null)this.caf(this.frame);this.frame=null;this.toLeaflet();}
+  cancel(){if(this.isSyncing())return;this.animation=null;if(this.motionFrame!=null)this.caf(this.motionFrame);if(this.layoutFrame!=null)this.caf(this.layoutFrame);this.layoutFrame=null;this.motionFrame=null;if(!this.handlingGesture)this.gl.stop();if(this.frame!==null)this.caf(this.frame);this.frame=null;this.toLeaflet();}
   observeFix(fix,heading){
    if(!Number.isFinite(fix.time)||fix.time<=(this.courseTime??-Infinity))return;
    const previousTime=this.courseTime;this.courseTime=fix.time;
@@ -34,14 +67,15 @@
   follow(fix,heading,reset=false){
    if(this.nav()?.isFollowing?.()===false||!Number.isFinite(fix.lat)||!Number.isFinite(fix.lon))return;
    this.observeFix(fix,heading);
-   const target={center:[fix.lon,fix.lat],bearing:this.course??this.gl.getBearing()};
+   this.lastFollowFix=fix;const layout=this.layout(),screen=layout.point;
+   const target={center:[fix.lon,fix.lat],bearing:this.course??this.gl.getBearing(),screen,size:[layout.width,layout.height]};
    // A queued Leaflet zoom is a real UI request, not a GPS animation to replay.
    if(this.frame!==null){target.zoom=this.map.getZoom()-1;this.caf(this.frame);this.frame=null;}
    if(this.animation){this.animation.target={...this.animation.target,...target};return;}
-   const c=this.gl.getCenter(),bearing=this.gl.getBearing();
-   if(Math.abs(c.lng-fix.lon)<1e-10&&Math.abs(c.lat-fix.lat)<1e-10&&Math.abs(this.turn(target.bearing-bearing))<.01&&target.zoom==null)return;
+   const c=this.gl.unproject(screen),bearing=this.gl.getBearing(),position=this.gl.project(target.center);
+   if(Math.hypot(position.x-screen[0],position.y-screen[1])<.05&&Math.abs(this.turn(target.bearing-bearing))<.01&&target.zoom==null)return;
    this.gl.stop();
-   this.animation={from:{center:[c.lng,c.lat],bearing,zoom:this.gl.getZoom()},target,started:null,duration:reset?280:240};
+   this.animation={from:{center:[c.lng,c.lat],bearing,zoom:this.gl.getZoom(),screen:[...screen],size:[layout.width,layout.height]},target,started:null,duration:reset?280:240};
    this.motionFrame=this.raf(time=>this.tick(time));
   }
   tick(time){
@@ -51,12 +85,16 @@
    const t=Math.min(1,Math.max(0,(time-animation.started)/animation.duration)),ease=t*t*(3-2*t),{from,target}=animation;
    const options={center:[from.center[0]+(target.center[0]-from.center[0])*ease,from.center[1]+(target.center[1]-from.center[1])*ease],bearing:from.bearing+this.turn(target.bearing-from.bearing)*ease,padding:{top:0,bottom:0,left:0,right:0}};
    if(target.zoom!=null)options.zoom=from.zoom+(target.zoom-from.zoom)*ease;
-   this.writingCamera=true;try{this.gl.jumpTo(options);}finally{this.writingCamera=false;}
+   const size=this.map.getSize(),dimensions=[size.x,size.y],screen=from.screen.map((p,i)=>{const start=p*dimensions[i]/from.size[i],end=target.screen[i]*dimensions[i]/target.size[i];return start+(end-start)*ease;});
+   options.offset=[screen[0]-size.x/2,screen[1]-size.y/2];options.duration=0;options.animate=false;
+   // MapLibre resolves the pixel anchor at the current pitch/bearing synchronously.
+   // Its zero-duration segment has no timer: this RAF remains the only animation clock.
+   this.writingCamera=true;try{this.gl.easeTo(options);}finally{this.writingCamera=false;}
    if(this.animation!==animation)return;
    // Leaflet is a data mirror; rebuilding its route arrows every camera frame is wasteful.
    if(t===1){this.animation=null;this.toLeaflet();}else this.motionFrame=this.raf(next=>this.tick(next));
   }
-  toLeaflet(){if(this.disposed)return;const center=this.gl.getCenter(),zoom=this.gl.getZoom()+1,bearing=-this.gl.getBearing();const host=this.gl.getContainer?.();if(host){host.dataset.cameraRevision='native-3';host.dataset.cameraBearing=String(this.gl.getBearing());host.dataset.cameraPitch=String(this.gl.getPitch());host.dataset.cameraZoom=String(this.gl.getZoom());}this.updatingLeaflet=true;try{const current=this.map.getCenter();if(Math.abs(((((this.map.getBearing?.()||0)-bearing)%360+540)%360)-180)>.01)this.map.setBearing?.(bearing);if(Math.abs(current.lat-center.lat)>1e-9||Math.abs(current.lng-center.lng)>1e-9||Math.abs(this.map.getZoom()-zoom)>1e-7)this.map.setView([center.lat,center.lng],zoom,{animate:false});}finally{this.updatingLeaflet=false;}}
+  toLeaflet(){if(this.disposed)return;const center=this.gl.getCenter(),zoom=this.gl.getZoom()+1,bearing=-this.gl.getBearing();const host=this.gl.getContainer?.();if(host){host.dataset.cameraRevision='native-4';host.dataset.cameraBearing=String(this.gl.getBearing());host.dataset.cameraPitch=String(this.gl.getPitch());host.dataset.cameraZoom=String(this.gl.getZoom());}this.updatingLeaflet=true;try{const current=this.map.getCenter();if(Math.abs(((((this.map.getBearing?.()||0)-bearing)%360+540)%360)-180)>.01)this.map.setBearing?.(bearing);if(Math.abs(current.lat-center.lat)>1e-9||Math.abs(current.lng-center.lng)>1e-9||Math.abs(this.map.getZoom()-zoom)>1e-7)this.map.setView([center.lat,center.lng],zoom,{animate:false});}finally{this.updatingLeaflet=false;}}
   queueCamera(){if(this.updatingLeaflet||this.disposed||this.frame!==null)return;this.frame=this.raf(()=>{this.frame=null;this.fromLeaflet();});}
   fromLeaflet(){if(this.updatingLeaflet||this.disposed)return;const c=this.map.getCenter(),now=this.gl.getCenter(),zoom=this.map.getZoom()-1,bearing=-(this.map.getBearing?.()||0);const turn=(((bearing-this.gl.getBearing())%360+540)%360)-180;if(Math.abs(c.lat-now.lat)<1e-9&&Math.abs(c.lng-now.lng)<1e-9&&Math.abs(zoom-this.gl.getZoom())<1e-7&&Math.abs(turn)<.01)return;this.gl.easeTo({center:[c.lng,c.lat],zoom,bearing:this.gl.getBearing()+turn,duration:350,essential:true});}
   queueData(){if(this.disposed||this.dataFrame!==null)return;this.dataFrame=this.raf(()=>{this.dataFrame=null;const source=this.gl.getSource('copiloter-overlays');if(source)source.setData(this.collect());});}
