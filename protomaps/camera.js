@@ -3,7 +3,7 @@
  class NativeCamera {
   constructor(renderer,map,getNavigator,env={}){
    this.gl=renderer;this.map=map;this.nav=getNavigator;this.L=env.L||root.L;this.document=env.document||root.document;this.raf=env.raf||root.requestAnimationFrame.bind(root);this.caf=env.caf||root.cancelAnimationFrame.bind(root);this.frame=null;this.dataFrame=null;this.updatingLeaflet=false;this.bound=new WeakSet();this.geometry=new WeakMap();this.disposed=false;
-   this.nativeMove=()=>this.toLeaflet();this.manual=e=>{if(!e.originalEvent)return;this.handlingGesture=true;try{this.nav()?.suspendCamera?.();}finally{this.handlingGesture=false;}this.toLeaflet();};this.leafMove=()=>this.queueCamera();this.changed=e=>{this.bindLayer(e.layer);this.queueData();};
+   this.nativeMove=()=>{if(!this.writingCamera)this.toLeaflet();};this.manual=e=>{if(!e.originalEvent)return;this.handlingGesture=true;try{this.nav()?.suspendCamera?.();}finally{this.handlingGesture=false;}this.toLeaflet();};this.leafMove=()=>this.queueCamera();this.changed=e=>{this.bindLayer(e.layer);this.queueData();};
    map.options.zoomSnap=0;
    for(const handler of ['dragging','scrollWheelZoom','touchZoom','doubleClickZoom','boxZoom','keyboard','touchRotate','dragRotate'])map[handler]?.disable?.();
    for(const type of ['dragstart','rotatestart','pitchstart','zoomstart'])renderer.on(type,this.manual);
@@ -16,9 +16,47 @@
   bindLayer(layer){if(!layer||this.bound.has(layer))return;this.bound.add(layer);layer.on?.('move add remove',()=>this.queueData());
    for(const name of ['setLatLngs','addLatLng','setRadius','setStyle','setOpacity','bindTooltip']){const original=layer[name];if(typeof original!=='function')continue;const camera=this;layer[name]=function(...args){const result=original.apply(this,args);if(name==='setLatLngs'||name==='addLatLng')camera.geometry.delete(this);camera.queueData();return result;};}
   }
-  cancel(){if(this.updatingLeaflet)return;if(!this.handlingGesture)this.gl.stop();if(this.frame!==null)this.caf(this.frame);this.frame=null;}
-  follow(fix){if(this.nav()?.isFollowing?.()===false)return;this.gl.easeTo({center:[fix.lon,fix.lat],duration:650,easing:t=>t*(2-t),essential:true});}
-  toLeaflet(){if(this.disposed)return;const center=this.gl.getCenter(),zoom=this.gl.getZoom()+1,bearing=-this.gl.getBearing();const host=this.gl.getContainer?.();if(host){host.dataset.cameraRevision='native-2';host.dataset.cameraBearing=String(this.gl.getBearing());host.dataset.cameraPitch=String(this.gl.getPitch());host.dataset.cameraZoom=String(this.gl.getZoom());}this.updatingLeaflet=true;try{const current=this.map.getCenter();if(Math.abs(((((this.map.getBearing?.()||0)-bearing)%360+540)%360)-180)>.01)this.map.setBearing?.(bearing);if(Math.abs(current.lat-center.lat)>1e-9||Math.abs(current.lng-center.lng)>1e-9||Math.abs(this.map.getZoom()-zoom)>1e-7)this.map.setView([center.lat,center.lng],zoom,{animate:false});}finally{this.updatingLeaflet=false;}}
+  isSyncing(){return this.updatingLeaflet||!!this.writingCamera;}
+  cancel(){if(this.isSyncing())return;this.animation=null;if(this.motionFrame!=null)this.caf(this.motionFrame);this.motionFrame=null;if(!this.handlingGesture)this.gl.stop();if(this.frame!==null)this.caf(this.frame);this.frame=null;this.toLeaflet();}
+  observeFix(fix,heading){
+   if(!Number.isFinite(fix.time)||fix.time<=(this.courseTime??-Infinity))return;
+   const previousTime=this.courseTime;this.courseTime=fix.time;
+   if(!Number.isFinite(heading)||heading<0||heading>=360||fix.accuracy>35||(Number.isFinite(fix.speed)&&fix.speed<1.5)){this.pendingCourse=null;return;}
+   if(this.course==null){this.course=heading;this.validCourseTime=fix.time;return;}
+   const delta=this.turn(heading-this.course),dt=Math.max(.1,Math.min(3,(fix.time-(previousTime??fix.time-1000))/1000));
+   if(Math.abs(delta)>70){const pending=this.pendingCourse;if(!pending||fix.time-pending.time>4000||Math.abs(this.turn(heading-pending.heading))>25){this.pendingCourse={heading,time:fix.time};return;}}
+   this.pendingCourse=null;this.validCourseTime=fix.time;
+   if(Math.abs(delta)<=4)return;
+   const filtered=delta*(1-Math.exp(-dt/.45)),limit=Math.min(90,45*dt);
+   this.course=(this.course+Math.max(-limit,Math.min(limit,filtered))+360)%360;
+  }
+  turn(angle){return ((angle%360+540)%360)-180;}
+  follow(fix,heading,reset=false){
+   if(this.nav()?.isFollowing?.()===false||!Number.isFinite(fix.lat)||!Number.isFinite(fix.lon))return;
+   this.observeFix(fix,heading);
+   const target={center:[fix.lon,fix.lat],bearing:this.course??this.gl.getBearing()};
+   // A queued Leaflet zoom is a real UI request, not a GPS animation to replay.
+   if(this.frame!==null){target.zoom=this.map.getZoom()-1;this.caf(this.frame);this.frame=null;}
+   if(this.animation){this.animation.target={...this.animation.target,...target};return;}
+   const c=this.gl.getCenter(),bearing=this.gl.getBearing();
+   if(Math.abs(c.lng-fix.lon)<1e-10&&Math.abs(c.lat-fix.lat)<1e-10&&Math.abs(this.turn(target.bearing-bearing))<.01&&target.zoom==null)return;
+   this.gl.stop();
+   this.animation={from:{center:[c.lng,c.lat],bearing,zoom:this.gl.getZoom()},target,started:null,duration:reset?280:240};
+   this.motionFrame=this.raf(time=>this.tick(time));
+  }
+  tick(time){
+   this.motionFrame=null;const animation=this.animation;if(!animation)return;
+   if(this.nav()?.isFollowing?.()===false){this.animation=null;return;}
+   if(animation.started===null)animation.started=time;
+   const t=Math.min(1,Math.max(0,(time-animation.started)/animation.duration)),ease=t*t*(3-2*t),{from,target}=animation;
+   const options={center:[from.center[0]+(target.center[0]-from.center[0])*ease,from.center[1]+(target.center[1]-from.center[1])*ease],bearing:from.bearing+this.turn(target.bearing-from.bearing)*ease,padding:{top:0,bottom:0,left:0,right:0}};
+   if(target.zoom!=null)options.zoom=from.zoom+(target.zoom-from.zoom)*ease;
+   this.writingCamera=true;try{this.gl.jumpTo(options);}finally{this.writingCamera=false;}
+   if(this.animation!==animation)return;
+   // Leaflet is a data mirror; rebuilding its route arrows every camera frame is wasteful.
+   if(t===1){this.animation=null;this.toLeaflet();}else this.motionFrame=this.raf(next=>this.tick(next));
+  }
+  toLeaflet(){if(this.disposed)return;const center=this.gl.getCenter(),zoom=this.gl.getZoom()+1,bearing=-this.gl.getBearing();const host=this.gl.getContainer?.();if(host){host.dataset.cameraRevision='native-3';host.dataset.cameraBearing=String(this.gl.getBearing());host.dataset.cameraPitch=String(this.gl.getPitch());host.dataset.cameraZoom=String(this.gl.getZoom());}this.updatingLeaflet=true;try{const current=this.map.getCenter();if(Math.abs(((((this.map.getBearing?.()||0)-bearing)%360+540)%360)-180)>.01)this.map.setBearing?.(bearing);if(Math.abs(current.lat-center.lat)>1e-9||Math.abs(current.lng-center.lng)>1e-9||Math.abs(this.map.getZoom()-zoom)>1e-7)this.map.setView([center.lat,center.lng],zoom,{animate:false});}finally{this.updatingLeaflet=false;}}
   queueCamera(){if(this.updatingLeaflet||this.disposed||this.frame!==null)return;this.frame=this.raf(()=>{this.frame=null;this.fromLeaflet();});}
   fromLeaflet(){if(this.updatingLeaflet||this.disposed)return;const c=this.map.getCenter(),now=this.gl.getCenter(),zoom=this.map.getZoom()-1,bearing=-(this.map.getBearing?.()||0);const turn=(((bearing-this.gl.getBearing())%360+540)%360)-180;if(Math.abs(c.lat-now.lat)<1e-9&&Math.abs(c.lng-now.lng)<1e-9&&Math.abs(zoom-this.gl.getZoom())<1e-7&&Math.abs(turn)<.01)return;this.gl.easeTo({center:[c.lng,c.lat],zoom,bearing:this.gl.getBearing()+turn,duration:350,essential:true});}
   queueData(){if(this.disposed||this.dataFrame!==null)return;this.dataFrame=this.raf(()=>{this.dataFrame=null;const source=this.gl.getSource('copiloter-overlays');if(source)source.setData(this.collect());});}
@@ -29,7 +67,7 @@
    else feature=layer.toGeoJSON();
    if(!feature?.geometry||feature.type!=='Feature')return;
    const gps=String(options.icon?.options?.className||'').includes('gps-arrow'),terminal=String(options.className||'').includes('route-terminal-stop');let label=layer.getTooltip?.()?.getContent?.();if(typeof label!=='string')label=label?.textContent||'';if(root.I18n)label=root.I18n.value(label);
-   feature.properties={kind:gps?'gps':terminal?'terminal':layer instanceof L.Circle?'accuracy':feature.geometry.type==='Point'?'stop':feature.geometry.type.includes('Polygon')?'polygon':'line',color:options.color||'#315e46',fill:options.fillColor||options.color||'#315e46',width:options.weight??2,opacity:options.opacity??1,fillOpacity:options.fillOpacity??.5,radius:options.radius||6.25,label,heading:this.nav()?.cameraState?.().heading||0};features.push(feature);
+   feature.properties={kind:gps?'gps':terminal?'terminal':layer instanceof L.Circle?'accuracy':feature.geometry.type==='Point'?'stop':feature.geometry.type.includes('Polygon')?'polygon':'line',color:options.color||'#315e46',fill:options.fillColor||options.color||'#315e46',width:options.weight??2,opacity:options.opacity??1,fillOpacity:options.fillOpacity??.5,radius:options.radius||6.25,label,heading:this.course??0};features.push(feature);
   });return{type:'FeatureCollection',features};}
   installLayers(){const gl=this.gl;if(gl.getSource('copiloter-overlays'))return;gl.addSource('copiloter-overlays',{type:'geojson',data:this.collect()});
    const canvas=this.document.createElement('canvas');canvas.width=canvas.height=36;const ctx=canvas.getContext('2d');ctx.beginPath();ctx.moveTo(18,3);ctx.lineTo(32,32);ctx.lineTo(18,26);ctx.lineTo(4,32);ctx.closePath();ctx.fillStyle='#e2231a';ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle='#fff';ctx.lineJoin='round';ctx.stroke();if(!gl.hasImage('copiloter-gps'))gl.addImage('copiloter-gps',ctx.getImageData(0,0,36,36));ctx.clearRect(0,0,36,36);ctx.fillStyle='#e2f3a2';ctx.fillRect(9,9,18,18);ctx.strokeStyle='#244b3b';ctx.lineWidth=3;ctx.strokeRect(9,9,18,18);if(!gl.hasImage('copiloter-terminal'))gl.addImage('copiloter-terminal',ctx.getImageData(0,0,36,36));
