@@ -82,3 +82,7 @@ Third-party marks, logos and data are not claimed as original Copiloter works.
 Múnich (Pruebas): recorridos y paradas de Münchner Verkehrsgesellschaft mbH (MVG), CC BY 4.0, https://creativecommons.org/licenses/by/4.0/ . Fuente: https://www.mvg.de/static/gtfs/google_transit.zip . Consulta: 2026-11-16. Datos transformados a recorridos GPX por Copiloter; sin atribución oficial a Copiloter. Datos separados en munich-routes.json.
 
 Núremberg (solo pruebas privadas): recorridos y paradas © OpenStreetMap contributors. ODbL 1.0: https://opendatacommons.org/licenses/odbl/1-0/ . Datos derivados disponibles por separado en nuremberg-routes.json. No se aplica el copyright de componentes originales de Copiloter a estos datos. El catálogo VGN se usó para contraste y no se redistribuyen sus paradas en esta instantánea.
+
+
+PROTOMAPS TEST CANDIDATE
+MapLibre GL JS 6.19.0: BSD-3-Clause. PMTiles 4.5.0: BSD-3-Clause. Protomaps basemap style 5.7.2: BSD-3-Clause / design CC0. Basemap data: ODbL, OpenStreetMap contributors and sources in protomaps/licenses/basemaps-LICENSE_DATA.md. Noto font glyphs: SIL Open Font License. Full notices in protomaps/licenses/. Glyph files are concatenated with byte-offset index; townhall sprite uses the existing generic building icon. No API keys or hosted paid mapping services.

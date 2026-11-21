@@ -1,0 +1,24 @@
+{
+  "id": "d203226d79d3ed6a",
+  "files": {
+    "sevilla.pmtiles": {
+      "url": "sevilla.pmtiles",
+      "bytes": 10099069,
+      "sha256": "3e7bfc44117f0a33cf17cd5f9f4443ac67cdd13367dd7e18dae850f99f782db4"
+    },
+    "glyphs.bin": {
+      "url": "glyphs.bin",
+      "bytes": 11480225,
+      "sha256": "bc5e771b62af6bc01b7a5ea59b9a4bd9031a987be6f3e0a03f4fd27a3c3d79e2"
+    }
+  },
+  "bounds": [
+    -6.12,
+    37.28,
+    -5.82,
+    37.5
+  ],
+  "minzoom": 0,
+  "maxzoom": 15,
+  "source": "https://build.protomaps.com/20261120.pmtiles"
+}
