@@ -8,7 +8,7 @@
    for(const handler of ['dragging','scrollWheelZoom','touchZoom','doubleClickZoom','boxZoom','keyboard','touchRotate','dragRotate'])map[handler]?.disable?.();
    for(const type of ['dragstart','rotatestart','pitchstart','zoomstart'])renderer.on(type,this.manual);
    renderer.on('move',this.nativeMove);map.on('move zoom rotate',this.leafMove);map.on('zoomend',()=>this.queueData());map.on('layeradd layerremove',this.changed);map.eachLayer(l=>this.bindLayer(l));
-   map.getContainer().addEventListener('click',e=>{if(e.target.closest('.leaflet-control-zoom-in,.leaflet-control-zoom-out'))this.nav()?.suspendCamera?.();},true);
+   map.getContainer().addEventListener('click',e=>{const button=e.target.closest('.leaflet-control-zoom-in,.leaflet-control-zoom-out');if(!button)return;e.preventDefault();e.stopPropagation();this.zoomBy(button.classList.contains('leaflet-control-zoom-in')?1:-1);},true);
    renderer.on('style.load',()=>{this.installLayers();this.queueData();});renderer.on('click',e=>this.popup(e));
    root.document?.documentElement.setAttribute('data-camera-native','true');
    this.installLayoutTracking();
@@ -20,7 +20,7 @@
     if(r.bottom<=height*.45)top=Math.max(top,Math.min(r.bottom+8,bottom-1));
     else if(r.top>=height*.55)bottom=Math.min(bottom,Math.max(r.top-8,top+1));
    }
-   return{width,height,top,bottom,point:[width/2,top+(bottom-top)*2/3]};
+   return{width,height,top,bottom,point:[width/2,top+(bottom-top)*3/4]};
   }
   layout(){
    const host=this.gl.getContainer?.()||this.map.getContainer(),box=host.getBoundingClientRect?.()||{left:0,top:0,width:0,height:0},size=this.map.getSize?.()||{};
@@ -64,13 +64,19 @@
    this.course=(this.course+Math.max(-limit,Math.min(limit,filtered))+360)%360;
   }
   turn(angle){return ((angle%360+540)%360)-180;}
-  follow(fix,heading,reset=false){
+  zoomBy(delta){
+   const zoom=Math.max(this.gl.getMinZoom?.()??0,Math.min(this.gl.getMaxZoom?.()??18,(this.animation?.target.zoom??this.gl.getZoom())+delta));
+   if(this.nav()?.isFollowing?.()&&this.lastFollowFix){this.follow(this.lastFollowFix,this.course,true,zoom);return;}
+   this.gl.easeTo({zoom,duration:200,essential:true});
+  }
+  follow(fix,heading,reset=false,zoom){
    if(this.nav()?.isFollowing?.()===false||!Number.isFinite(fix.lat)||!Number.isFinite(fix.lon))return;
    this.observeFix(fix,heading);
    this.lastFollowFix=fix;const layout=this.layout(),screen=layout.point;
    const target={center:[fix.lon,fix.lat],bearing:this.course??this.gl.getBearing(),screen,size:[layout.width,layout.height]};
+   if(Number.isFinite(zoom))target.zoom=zoom;
    // A queued Leaflet zoom is a real UI request, not a GPS animation to replay.
-   if(this.frame!==null){target.zoom=this.map.getZoom()-1;this.caf(this.frame);this.frame=null;}
+   if(this.frame!==null){if(!Number.isFinite(zoom))target.zoom=this.map.getZoom()-1;this.caf(this.frame);this.frame=null;}
    if(this.animation){this.animation.target={...this.animation.target,...target};return;}
    const c=this.gl.unproject(screen),bearing=this.gl.getBearing(),position=this.gl.project(target.center);
    if(Math.hypot(position.x-screen[0],position.y-screen[1])<.05&&Math.abs(this.turn(target.bearing-bearing))<.01&&target.zoom==null)return;
