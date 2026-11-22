@@ -1,0 +1,10 @@
+#settingsView{gap:8px}
+#settingsView>footer{margin-top:8px;font-size:12px;line-height:1.4}
+#lineDataAction{margin-top:12px;padding-top:10px;border-top:1px solid #8b9c914d}
+#lineDataAction .line-data-refresh{width:auto;max-width:100%;min-height:44px;padding:8px 12px;font:inherit;white-space:normal}
+#dataStatus.compact-data-status{position:fixed;z-index:5000;left:50%;bottom:max(16px,env(safe-area-inset-bottom));transform:translateX(-50%);width:max-content;max-width:min(420px,calc(100vw - 32px));box-sizing:border-box;margin:0;padding:9px 12px;border:1px solid #718b7c;border-radius:10px;background:#f0f5f1;color:#183c2c;box-shadow:0 2px 8px #0002;pointer-events:none;font:13px/1.35 system-ui}
+#dataStatus.compact-data-status[hidden]{display:none!important}
+#dataStatus.compact-data-status .update-result{font:inherit;margin:0}
+html[data-theme="night"] #dataStatus.compact-data-status{background:#23352c;color:#e0ebe4;border-color:#6d8878}
+.current-map-provider{font-size:13px;line-height:1.4}
+#mapsView>.map-settings[hidden],#mapsView .provider-pro-tags[hidden]{display:none!important}
