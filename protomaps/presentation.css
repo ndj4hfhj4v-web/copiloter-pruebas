@@ -8,3 +8,14 @@
 html[data-theme="night"] #dataStatus.compact-data-status{background:#23352c;color:#e0ebe4;border-color:#6d8878}
 .current-map-provider{font-size:13px;line-height:1.4}
 #mapsView>.map-settings[hidden],#mapsView .provider-pro-tags[hidden]{display:none!important}
+
+/* Night-only contrast. No dimensions, layout or day-mode rules change. */
+html[data-theme="night"] .map-app #optionsToggle,
+html[data-theme="night"] .map-app #optionsToggle:hover,
+html[data-theme="night"] .map-app #optionsToggle:active{
+ background:#183c2c;
+ border-radius:12px;
+}
+html[data-theme="night"] .map-app #menuGearIcon>path{
+ fill:#f1f7f2;
+}
