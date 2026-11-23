@@ -13,7 +13,7 @@
   if(!renderer?.getLayer('copiloter-lines'))return;
   // Route strokes only: preserve polygons, arrows, GPS and the active red recording.
   const recording=['all',['==',['get','color'],'#d22129'],['==',['get','width'],5],['==',['get','opacity'],0.95]];
-  const night=['case',['all',['==',['get','kind'],'line'],['!',recording]],'#43D9F2',['get','color']];
+  const night=['case',['==',['get','color'],'#F59E0B'],'#F59E0B',['all',['==',['get','kind'],'line'],['!',recording]],'#43D9F2',['get','color']];
   renderer.setPaintProperty('copiloter-lines','line-color',document.documentElement.dataset.theme==='night'?night:['get','color']);
  }
  async function appearance(){lock();routeAppearance();if(basemap)return basemap.refresh();}
