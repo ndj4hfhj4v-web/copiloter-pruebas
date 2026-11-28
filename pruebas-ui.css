@@ -1,0 +1,21 @@
+/* Pruebas only. Keep system status/navigation bars visible; use the viewport the browser exposes. */
+html.map-viewport{height:100%;overflow:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%}
+.map-app #gpsDetail,.map-app #gpsDetail[data-expanded="true"]{height:100vh;height:var(--app-height,100vh)}
+/* Old Android browsers ignore env()/calc() declarations: retain usable control positions. */
+.map-app .map-toolbar{top:12px;left:12px;right:12px}
+.map-app #linePanel{left:12px}.map-app #optionsPanel{right:12px}
+.map-app .floating-panel{top:74px;max-height:calc(100vh - 98px);width:calc(100% - 24px);max-width:390px}
+.map-app #map .map-location{right:14px;bottom:26px}
+@supports(padding:env(safe-area-inset-top)){
+ .map-app .map-toolbar{top:calc(env(safe-area-inset-top,0px) + 12px);left:calc(env(safe-area-inset-left,0px) + 12px);right:calc(env(safe-area-inset-right,0px) + 12px)}
+ .map-app #linePanel{left:calc(env(safe-area-inset-left,0px) + 12px)}.map-app #optionsPanel{right:calc(env(safe-area-inset-right,0px) + 12px)}
+ .map-app .floating-panel{top:calc(env(safe-area-inset-top,0px) + 74px);max-height:calc(var(--app-height,100vh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 98px);width:calc(100% - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 24px)}
+ .map-app #map .map-location{right:calc(env(safe-area-inset-right,0px) + 14px);bottom:calc(env(safe-area-inset-bottom,0px) + 26px)}
+}
+/* When Android exposes the status-bar inset, protect system-icon contrast over light map tiles. */
+html[data-android="true"] .map-app::before{content:"";position:fixed;top:0;left:0;right:0;height:0;height:env(safe-area-inset-top,0px);background:#244b3b;pointer-events:none;z-index:1090}
+html[data-android="true"][data-theme="night"] .map-app::before{background:#101c17}
+.map-app .quick-lines #favouritesFilter[aria-pressed="true"],html[data-theme="night"] .map-app .quick-lines #favouritesFilter[aria-pressed="true"]{background:#244b3b;color:#fff;border-color:#244b3b;box-shadow:inset 0 0 0 1px #ffffff55}
+.map-app #favouritesFilter:focus-visible{outline:3px solid #E8B21B;outline-offset:2px}
+
+.map-app .lines>.favourites-empty{color:#355844}html[data-theme="night"] .map-app .lines>.favourites-empty{color:#cbded2}
